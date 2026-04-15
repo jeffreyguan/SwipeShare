@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth"
 import pool from "@/lib/db"
 
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: { id: string } }) {
   const { id } = await params
   const session = await getServerSession()
 
@@ -25,7 +25,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   return Response.json(result.rows[0], { status: 201 })
 }
 
-export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: Request, { params }: { params: { id: string } }) {
   const { id } = await params
   const session = await getServerSession()
 
@@ -42,7 +42,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   return Response.json({ success: true })
 }
 
-export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: { id: string } }) {
   const { id } = await params
   
   const result = await pool.query(

@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth"
 import pool from "@/lib/db"
 
-export async function DELETE(req: Request, { params }: { params: Promise<{ id?: string }> }) {
+export async function DELETE(req: Request, { params }: { params: { id: string } }) {
   const { id } = await params
   const session = await getServerSession()
 
