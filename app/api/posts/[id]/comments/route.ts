@@ -1,4 +1,5 @@
 import { getServerSession } from "next-auth"
+import { NextRequest } from 'next/server';
 import pool from "@/lib/db"
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -25,7 +26,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   return Response.json(result.rows[0], { status: 201 })
 }
 
-export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const session = await getServerSession()
 
