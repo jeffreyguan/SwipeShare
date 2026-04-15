@@ -1,65 +1,356 @@
-import Image from "next/image";
+"use client"
+
+import { useState, useEffect } from "react"
+import { useSession, signIn, signOut } from "next-auth/react"
+
+type Post = {
+  id: number
+  type: "DONATE" | "REQUEST"
+  message: string
+  dining_hall: string
+  available_time: string
+  author_name: string
+  author_email: string
+  created_at: string
+}
 
 export default function Home() {
+  const { data: session } = useSession()
+  const [posts, setPosts] = useState<Post[]>([])
+  const [showModal, setShowModal] = useState(false)
+  const [expandedPost, setExpandedPost] = useState<number | null>(null)
+
+  useEffect(() => {
+    fetch("/api/posts")
+      .then(res => res.json())
+      .then(setPosts)
+  }, [])
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <main className="max-w-xl mx-auto px-4 py-8 text-left">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">SwipeShare</h1>
+        <div className="flex items-center gap-3">
+          {session ? (
+            <>
+              <span className="text-sm text-gray-500">{session.user?.email}</span>
+              <button onClick={() => signOut()} className="text-sm text-red-500">Sign out</button>
+            </>
+          ) : (
+            <button onClick={() => signIn("google", { callbackUrl: "/" }, { prompt: "select_account" })} className="bg-black text-white px-4 py-2 rounded-full text-sm">
+              Sign in
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* New Post Button */}
+      {session && (
+        <button
+          onClick={() => setShowModal(true)}
+          className="w-full bg-black text-white py-2 rounded-full mb-6 font-medium"
+        >
+          + New Post
+        </button>
+      )}
+
+      {/* Feed */}
+      <div className="space-y-4">
+        {posts.map(post => (
+          <PostCard
+            key={post.id}
+            post={post}
+            expanded={expandedPost === post.id}
+            onExpand={() => setExpandedPost(expandedPost === post.id ? null : post.id)}
+            onDelete={(id) => setPosts(posts.filter(p => p.id !== id))}
+            session={session}
+          />
+        ))}
+      </div>
+
+      {/* Modal */}
+      {showModal && (
+        <NewPostModal
+          onClose={() => setShowModal(false)}
+          onPost={(newPost) => {
+            setPosts([newPost, ...posts])
+            setShowModal(false)
+          }}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+      )}
+    </main>
+  )
+}
+
+function PostCard({ post, expanded, onExpand, onDelete, session }: {
+  post: Post
+  expanded: boolean
+  onExpand: () => void
+  onDelete: (id: number) => void
+  session: any
+}) {
+  const [comments, setComments] = useState<any[]>([])
+  const [newComment, setNewComment] = useState("")
+
+  useEffect(() => {
+    if (expanded) {
+      fetch(`/api/posts/${post.id}/comments`)
+        .then(res => res.json())
+        .then(setComments)
+    }
+  }, [expanded])
+
+const submitComment = async () => {
+  if (!newComment.trim()) return
+  await fetch(`/api/posts/${post.id}/comments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: newComment })
+  })
+  setNewComment("")
+  
+  const res = await fetch(`/api/posts/${post.id}/comments`)
+  const data = await res.json()
+  console.log("fetched comments:", data)
+  setComments(data)
+}
+
+  return (
+    <div className="border rounded-xl p-4">
+      {/* Post Header */}
+      <div className="flex justify-between items-center mb-2">
+        <span className={`text-xs font-bold px-2 py-1 rounded-full ${
+          post.type === "DONATE" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"
+        }`}>
+          {post.type}
+        </span>
+        <span className="text-xs text-gray-400">
+          {new Date(post.created_at).toLocaleDateString()}
+        </span>
+      </div>
+
+      {/* Post Body */}
+      <p className="text-sm mb-1">{post.message}</p>
+      {post.dining_hall && <p className="text-xs text-gray-500"> Location: {post.dining_hall}</p>}
+      {post.available_time && (
+        <p className="text-xs text-gray-500">
+          {new Date(post.available_time).toLocaleString()}
+        </p>
+      )}
+      <div className="flex justify-between items-center mt-2">
+        <p className="text-xs text-gray-400">Name: {post.author_name}</p>
+        {session?.user?.email === post.author_email && (
+            <button
+            onClick={async () => {
+                await fetch(`/api/posts/${post.id}`, { method: "DELETE" })
+                onDelete(post.id)
+            }}
+            className="text-xs text-gray-300 hover:text-red-400"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+            Delete
+            </button>
+        )}
+      </div>
+
+      {/* Comments Toggle */}
+      <button
+        onClick={onExpand}
+        className="text-xs text-gray-400 mt-3 hover:text-gray-600 hover:underline"
+      >
+        {expanded ? "Hide comments" : "View comments"}
+      </button>
+
+      {/* Comments Section */}
+      {expanded && (
+        <div className="mt-3 space-y-2">
+          {comments.length === 0 && (
+            <p className="text-xs text-gray-400">No comments yet</p>
+          )}
+          {comments.map(comment => (
+            <div key={comment.id} className="text-sm border-l-2 pl-3">
+              <span className="font-medium text-xs">{comment.author_name}</span>
+              <p>{comment.message}</p>
+            </div>
+          ))}
+
+          {session && (
+            <div className="flex gap-2 mt-2">
+              <input
+                value={newComment}
+                onChange={e => setNewComment(e.target.value)}
+                placeholder="Add a comment..."
+                className="flex-1 border rounded-full px-3 py-1 text-sm text-black bg-white"
+              />
+              <button
+                onClick={submitComment}
+                className="bg-black text-white px-3 py-1 rounded-full text-sm"
+              >
+                Post
+              </button>
+            </div>
+          )}
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+      )}
     </div>
-  );
+  )
+}
+
+function NewPostModal({ onClose, onPost }: {
+  onClose: () => void
+  onPost: (post: Post) => void
+}) {
+  const [type, setType] = useState<"DONATE" | "REQUEST">("DONATE")
+  const [message, setMessage] = useState("")
+  const [diningHall, setDiningHall] = useState("")
+  const [availableDate, setAvailableDate] = useState("")
+  const [availableHour, setAvailableHour] = useState("")
+  const [availableMinute, setAvailableMinute] = useState("")
+  const [availablePeriod, setAvailablePeriod] = useState<"AM" | "PM">("AM")
+
+  const DINING_HALLS = [
+    'Downstein',
+    'Third North', 
+    'Lipton', 
+    'Kimmel', 
+    'Jasper Kane', 
+    'Palladium', 
+    'Upstein',
+    'Crave'
+  ]
+
+  const submit = async () => {
+    // Validate time if provided
+    if (availableHour || availableMinute) {
+      const hour = parseInt(availableHour, 10)
+      const minute = parseInt(availableMinute, 10)
+      
+      if (isNaN(hour) || hour < 1 || hour > 12) {
+        alert("Please enter a valid hour (1-12)")
+        return
+      }
+      if (isNaN(minute) || minute < 0 || minute > 59) {
+        alert("Please enter a valid minute (0-59)")
+        return
+      }
+    }
+
+    let availableTime = ""
+    if (availableDate) {
+      availableTime = availableDate
+      if (availableHour && availableMinute) {
+        // Convert 12-hour to 24-hour format
+        let hour24 = parseInt(availableHour, 10)
+        if (availablePeriod === "PM" && hour24 !== 12) {
+          hour24 += 12
+        } else if (availablePeriod === "AM" && hour24 === 12) {
+          hour24 = 0
+        }
+        availableTime += `T${hour24.toString().padStart(2, '0')}:${availableMinute.padStart(2, '0')}`
+      }
+    }
+    const res = await fetch("/api/posts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type,
+        message,
+        dining_hall: diningHall,
+        available_time: availableTime
+      })
+    })
+    const post = await res.json()
+    onPost(post)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="font-bold text-lg text-black">New Post</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-black">✕</button>
+        </div>
+
+        {/* Type Toggle */}
+        <div className="flex gap-2 mb-4">
+          {["DONATE", "REQUEST"].map(t => (
+            <button
+              key={t}
+              onClick={() => setType(t as "DONATE" | "REQUEST")}
+              className={`flex-1 py-2 rounded-full text-sm font-medium ${
+                type === t ? "bg-black text-white" : "border text-gray-500"
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
+        {/* Message */}
+        <textarea
+          value={message}
+          onChange={e => setMessage(e.target.value)}
+          placeholder="Add a short message (optional)"
+          className="w-full border rounded-xl p-3 text-sm mb-3 resize-none text-black"
+          rows={3}
+        />
+
+        {/* Dining Hall */}
+        <select
+          value={diningHall}
+          onChange={e => setDiningHall(e.target.value)}
+          className="w-full border rounded-xl p-3 text-sm mb-3 text-black h-12"
+        >
+          <option value="">Select dining hall (optional)</option>
+          {DINING_HALLS.map(h => (
+            <option key={h} value={h}>{h}</option>
+          ))}
+        </select>
+
+        {/* Date */}
+        <input
+          type="date"
+          value={availableDate}
+          onChange={e => setAvailableDate(e.target.value)}
+          className="w-full border rounded-xl p-3 text-sm mb-3 text-black h-12"
+        />
+
+        {/* Time Inputs */}
+        <div className="flex gap-1 mb-4 justify-center">
+          <input
+            type="text"
+            value={availableHour}
+            onChange={e => setAvailableHour(e.target.value)}
+            placeholder="HH"
+            maxLength={2}
+            className="w-16 border rounded-xl p-3 text-sm text-black h-12 text-center"
+          />
+          <div className="flex items-center text-black px-1 text-lg font-bold">:</div>
+          <input
+            type="text"
+            value={availableMinute}
+            onChange={e => setAvailableMinute(e.target.value)}
+            placeholder="MM"
+            maxLength={2}
+            className="w-16 border rounded-xl p-3 text-sm text-black h-12 text-center"
+          />
+          <select
+            value={availablePeriod}
+            onChange={e => setAvailablePeriod(e.target.value as "AM" | "PM")}
+            className="w-16 border rounded-xl p-3 text-sm text-black h-12 text-center"
+          >
+            <option value="AM">AM</option>
+            <option value="PM">PM</option>
+          </select>
+        </div>
+
+        <button
+          onClick={submit}
+          className="w-full bg-black text-white py-2 rounded-full font-medium"
+        >
+          Post
+        </button>
+      </div>
+    </div>
+  )
 }
