@@ -24,25 +24,6 @@ export async function POST(req: Request) {
   return Response.json(result.rows[0], { status: 201 })
 }
 
-export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params
-  const session = await getServerSession()
-
-  if (!session?.user?.email) {
-    return Response.json({ error: "Not logged in" }, { status: 401 })
-  }
-
-  // make sure they own the post
-  const post = await pool.query(`SELECT * FROM posts WHERE id = $1`, [id])
-  if (post.rows[0]?.author_email !== session.user.email) {
-    return Response.json({ error: "Unauthorized" }, { status: 403 })
-  }
-
-  await pool.query(`DELETE FROM posts WHERE id = $1`, [id])
-  console.log("deleting post", id)
-  return Response.json({ success: true })
-}
-
 export async function GET() {
   const result = await pool.query(
     `SELECT posts.*, users.name as author_name 
