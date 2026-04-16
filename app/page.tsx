@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import type { Session } from "next-auth"
 import { useSession, signIn, signOut } from "next-auth/react"
 
 type Post = {
@@ -14,16 +15,72 @@ type Post = {
   created_at: string
 }
 
+type Comment = {
+  id: number
+  author_name: string
+  message: string
+}
+
+type PostsResponse = {
+  error?: string
+  posts?: Post[]
+}
+
+type CommentsResponse = {
+  error?: string
+}
+
 export default function Home() {
   const { data: session } = useSession()
   const [posts, setPosts] = useState<Post[]>([])
+  const [postsError, setPostsError] = useState<string | null>(null)
+  const [isLoadingPosts, setIsLoadingPosts] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [expandedPost, setExpandedPost] = useState<number | null>(null)
 
   useEffect(() => {
-    fetch("/api/posts")
-      .then(res => res.json())
-      .then(setPosts)
+    let isMounted = true
+
+    const loadPosts = async () => {
+      try {
+        const res = await fetch("/api/posts")
+        const data: Post[] | PostsResponse = await res.json()
+
+        if (!isMounted) {
+          return
+        }
+
+        if (!res.ok) {
+          const errorMessage = !Array.isArray(data) && data.error
+            ? data.error
+            : "Couldn't load posts right now."
+
+          setPosts([])
+          setPostsError(errorMessage)
+          return
+        }
+
+        setPosts(Array.isArray(data) ? data : data.posts ?? [])
+        setPostsError(null)
+      } catch {
+        if (!isMounted) {
+          return
+        }
+
+        setPosts([])
+        setPostsError("Couldn't load posts right now.")
+      } finally {
+        if (isMounted) {
+          setIsLoadingPosts(false)
+        }
+      }
+    }
+
+    void loadPosts()
+
+    return () => {
+      isMounted = false
+    }
   }, [])
 
   return (
@@ -35,10 +92,10 @@ export default function Home() {
           {session ? (
             <>
               <span className="text-sm text-gray-500">{session.user?.email}</span>
-              <button onClick={() => signOut()} className="text-sm text-red-500">Sign out</button>
+              <button type="button" onClick={() => signOut()} className="text-sm text-red-500">Sign out</button>
             </>
           ) : (
-            <button onClick={() => signIn("google", { callbackUrl: "/" }, { prompt: "select_account" })} className="bg-black text-white px-4 py-2 rounded-full text-sm">
+            <button type="button" onClick={() => signIn("google", { callbackUrl: "/" }, { prompt: "select_account" })} className="bg-black text-white px-4 py-2 rounded-full text-sm">
               Sign in
             </button>
           )}
@@ -48,6 +105,7 @@ export default function Home() {
       {/* New Post Button */}
       {session && (
         <button
+          type="button"
           onClick={() => setShowModal(true)}
           className="w-full bg-black text-white py-2 rounded-full mb-6 font-medium"
         >
@@ -57,6 +115,24 @@ export default function Home() {
 
       {/* Feed */}
       <div className="space-y-4">
+        {isLoadingPosts && (
+          <p className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-500">
+            Loading posts...
+          </p>
+        )}
+
+        {postsError && (
+          <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {postsError}
+          </p>
+        )}
+
+        {!isLoadingPosts && !postsError && posts.length === 0 && (
+          <p className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-500">
+            No posts yet. Sign in to share an available swipe or request one.
+          </p>
+        )}
+
         {posts.map(post => (
           <PostCard
             key={post.id}
@@ -88,33 +164,58 @@ function PostCard({ post, expanded, onExpand, onDelete, session }: {
   expanded: boolean
   onExpand: () => void
   onDelete: (id: number) => void
-  session: any
+  session: Session | null
 }) {
-  const [comments, setComments] = useState<any[]>([])
+  const [comments, setComments] = useState<Comment[]>([])
   const [newComment, setNewComment] = useState("")
 
   useEffect(() => {
-    if (expanded) {
-      fetch(`/api/posts/${post.id}/comments`)
-        .then(res => res.json())
-        .then(setComments)
+    if (!expanded) {
+      return
     }
-  }, [expanded])
 
-const submitComment = async () => {
-  if (!newComment.trim()) return
-  await fetch(`/api/posts/${post.id}/comments`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: newComment })
-  })
-  setNewComment("")
-  
-  const res = await fetch(`/api/posts/${post.id}/comments`)
-  const data = await res.json()
-  console.log("fetched comments:", data)
-  setComments(data)
-}
+    const loadComments = async () => {
+      try {
+        const res = await fetch(`/api/posts/${post.id}/comments`)
+        const data: Comment[] | CommentsResponse = await res.json()
+
+        if (!res.ok || !Array.isArray(data)) {
+          setComments([])
+          return
+        }
+
+        setComments(data)
+      } catch {
+        setComments([])
+      }
+    }
+
+    void loadComments()
+  }, [expanded, post.id])
+
+  const submitComment = async () => {
+    if (!newComment.trim()) return
+
+    const response = await fetch(`/api/posts/${post.id}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: newComment })
+    })
+
+    if (!response.ok) {
+      return
+    }
+
+    setNewComment("")
+
+    try {
+      const res = await fetch(`/api/posts/${post.id}/comments`)
+      const data: Comment[] | CommentsResponse = await res.json()
+      setComments(Array.isArray(data) ? data : [])
+    } catch {
+      setComments([])
+    }
+  }
 
   return (
     <div className="border rounded-xl p-4">
@@ -142,6 +243,7 @@ const submitComment = async () => {
         <p className="text-xs text-gray-400">Name: {post.author_name}</p>
         {session?.user?.email === post.author_email && (
             <button
+            type="button"
             onClick={async () => {
                 await fetch(`/api/posts/${post.id}`, { method: "DELETE" })
                 onDelete(post.id)
@@ -155,6 +257,7 @@ const submitComment = async () => {
 
       {/* Comments Toggle */}
       <button
+        type="button"
         onClick={onExpand}
         className="text-xs text-gray-400 mt-3 hover:text-gray-600 hover:underline"
       >
@@ -183,6 +286,7 @@ const submitComment = async () => {
                 className="flex-1 border rounded-full px-3 py-1 text-sm text-black bg-white"
               />
               <button
+                type="button"
                 onClick={submitComment}
                 className="bg-black text-white px-3 py-1 rounded-full text-sm"
               >
@@ -268,7 +372,7 @@ function NewPostModal({ onClose, onPost }: {
       <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4">
         <div className="flex justify-between items-center mb-4">
           <h2 className="font-bold text-lg text-black">New Post</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-black">✕</button>
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-black">✕</button>
         </div>
 
         {/* Type Toggle */}
@@ -276,6 +380,7 @@ function NewPostModal({ onClose, onPost }: {
           {["DONATE", "REQUEST"].map(t => (
             <button
               key={t}
+              type="button"
               onClick={() => setType(t as "DONATE" | "REQUEST")}
               className={`flex-1 py-2 rounded-full text-sm font-medium ${
                 type === t ? "bg-black text-white" : "border text-gray-500"
@@ -345,6 +450,7 @@ function NewPostModal({ onClose, onPost }: {
         </div>
 
         <button
+          type="button"
           onClick={submit}
           className="w-full bg-black text-white py-2 rounded-full font-medium"
         >
