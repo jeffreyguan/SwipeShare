@@ -1,21 +1,36 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #faf9fb;
+  --foreground: #17121c;
+  --card: #ffffff;
+  --border: #e7e3ec;
+  --muted: #8b8594;
+  --brand: #57068c;
+  --brand-hover: #470571;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #121016;
+    --foreground: #f1eef5;
+    --card: #1b1821;
+    --border: #2c2833;
+    --muted: #948da0;
+    --brand: #b06fe0;
+    --brand-hover: #c48af0;
   }
 }
 
@@ -28,5 +43,20 @@ body {
 /* Hide datetime input picker icons */
 input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   display: none;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-toast-in {
+  animation: toast-in 0.18s ease-out;
 }
 
