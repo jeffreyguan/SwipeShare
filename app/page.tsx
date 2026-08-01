@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useSession, signIn, signOut } from "next-auth/react"
+import { useRouter } from "next/navigation"
 import type { Session } from "next-auth"
 import {
   Gift,
@@ -9,6 +10,8 @@ import {
   MapPin,
   Clock,
   MessageCircle,
+  Mail,
+  Pencil,
   Trash2,
   X,
   Plus,
@@ -21,6 +24,7 @@ import {
 
 type PostType = "DONATE" | "REQUEST"
 type PostStatus = "OPEN" | "CLAIMED"
+type SortMode = "NEWEST" | "AVAILABLE_SOON"
 
 type Post = {
   id: number
@@ -69,13 +73,34 @@ function formatAvailableTime(dateStr: string) {
   return `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`
 }
 
+function isExpired(post: Post) {
+  return post.status === "OPEN" && !!post.available_time && new Date(post.available_time).getTime() < Date.now()
+}
+
+const DINING_HALLS = [
+  'Downstein',
+  'Third North',
+  'Lipton',
+  'Kimmel',
+  'Jasper Kane',
+  'Palladium',
+  'Upstein',
+  'Crave'
+]
+
 export default function Home() {
   const { data: session } = useSession()
+  const router = useRouter()
   const [posts, setPosts] = useState<Post[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
+  const [editingPost, setEditingPost] = useState<Post | null>(null)
   const [expandedPost, setExpandedPost] = useState<number | null>(null)
   const [filter, setFilter] = useState<"ALL" | PostType>("ALL")
+  const [diningHallFilter, setDiningHallFilter] = useState("")
+  const [sortMode, setSortMode] = useState<SortMode>("NEWEST")
+  const [mineOnly, setMineOnly] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
   const [toasts, setToasts] = useState<Toast[]>([])
 
   const showToast = useCallback((message: string, kind: Toast["kind"] = "error") => {
@@ -84,17 +109,52 @@ export default function Home() {
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3500)
   }, [])
 
-  useEffect(() => {
+  const hasLoadedPostsRef = useRef(false)
+  const loadPosts = useCallback(() => {
     fetch("/api/posts")
       .then(res => (res.ok ? res.json() : Promise.reject(res)))
       .then(setPosts)
-      .catch(() => showToast("Couldn't load posts. Try refreshing."))
-      .finally(() => setLoading(false))
+      .catch(() => { if (!hasLoadedPostsRef.current) showToast("Couldn't load posts. Try refreshing.") })
+      .finally(() => { setLoading(false); hasLoadedPostsRef.current = true })
   }, [showToast])
 
-  const visiblePosts = posts.filter(p => filter === "ALL" || p.type === filter)
-  const openPosts = visiblePosts.filter(p => p.status === "OPEN")
+  useEffect(() => {
+    loadPosts()
+    const interval = setInterval(loadPosts, 5000)
+    return () => clearInterval(interval)
+  }, [loadPosts])
+
+  useEffect(() => {
+    if (!session) return
+    const loadUnread = () => {
+      fetch("/api/conversations")
+        .then(res => (res.ok ? res.json() : Promise.reject(res)))
+        .then((cs: { unread_count: number }[]) => setUnreadCount(cs.reduce((sum, c) => sum + c.unread_count, 0)))
+        .catch(() => {})
+    }
+    loadUnread()
+    const interval = setInterval(loadUnread, 5000)
+    return () => clearInterval(interval)
+  }, [session])
+
+  const visiblePosts = posts
+    .filter(p => filter === "ALL" || p.type === filter)
+    .filter(p => !diningHallFilter || p.dining_hall === diningHallFilter)
+    .filter(p => !mineOnly || p.author_email === session?.user?.email)
+    .sort((a, b) => {
+      if (sortMode === "AVAILABLE_SOON") {
+        if (!a.available_time && !b.available_time) return 0
+        if (!a.available_time) return 1
+        if (!b.available_time) return -1
+        return new Date(a.available_time).getTime() - new Date(b.available_time).getTime()
+      }
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    })
+  const openPosts = visiblePosts.filter(p => p.status === "OPEN" && !isExpired(p))
+  const expiredPosts = visiblePosts.filter(p => isExpired(p))
   const claimedPosts = visiblePosts.filter(p => p.status === "CLAIMED")
+
+  const myPosts = posts.filter(p => p.author_email === session?.user?.email)
 
   return (
     <main className="max-w-xl mx-auto px-4 py-8 text-left">
@@ -110,6 +170,18 @@ export default function Home() {
           {session ? (
             <>
               <span className="hidden sm:block text-sm text-muted">{session.user?.email}</span>
+              <button
+                onClick={() => router.push("/messages")}
+                className="relative text-muted hover:text-foreground transition-colors"
+                aria-label="Messages"
+              >
+                <Mail size={18} />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 bg-brand text-white text-[9px] font-bold rounded-full min-w-[15px] h-[15px] flex items-center justify-center px-1">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
               <button
                 onClick={() => signOut()}
                 className="flex items-center gap-1 text-sm text-muted hover:text-red-500 transition-colors"
@@ -130,7 +202,7 @@ export default function Home() {
       </div>
 
       {/* Filter Tabs */}
-      <div className="flex gap-1 mb-4 bg-card border border-border rounded-full p-1">
+      <div className="flex gap-1 mb-3 bg-card border border-border rounded-full p-1">
         {(["ALL", "DONATE", "REQUEST"] as const).map(f => (
           <button
             key={f}
@@ -144,10 +216,51 @@ export default function Home() {
         ))}
       </div>
 
+      {/* Dining hall / sort / mine controls */}
+      <div className="flex flex-wrap gap-2 mb-4">
+        <select
+          value={diningHallFilter}
+          onChange={e => setDiningHallFilter(e.target.value)}
+          className="flex-1 min-w-[140px] border border-border rounded-full px-3 py-1.5 text-sm bg-card"
+        >
+          <option value="">All dining halls</option>
+          {DINING_HALLS.map(h => (
+            <option key={h} value={h}>{h}</option>
+          ))}
+        </select>
+        <select
+          value={sortMode}
+          onChange={e => setSortMode(e.target.value as SortMode)}
+          className="flex-1 min-w-[140px] border border-border rounded-full px-3 py-1.5 text-sm bg-card"
+        >
+          <option value="NEWEST">Newest first</option>
+          <option value="AVAILABLE_SOON">Available soonest</option>
+        </select>
+        {session && (
+          <button
+            onClick={() => setMineOnly(m => !m)}
+            className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
+              mineOnly ? "bg-brand text-white border-brand" : "border-border text-muted hover:text-foreground"
+            }`}
+          >
+            Mine
+          </button>
+        )}
+      </div>
+
+      {mineOnly && (
+        <p className="text-xs text-muted mb-4">
+          {myPosts.length} post{myPosts.length === 1 ? "" : "s"} ·{" "}
+          {myPosts.filter(p => p.type === "DONATE").length} donated ·{" "}
+          {myPosts.filter(p => p.type === "REQUEST").length} requested ·{" "}
+          {myPosts.filter(p => p.status === "CLAIMED").length} claimed
+        </p>
+      )}
+
       {/* New Post Button */}
       {session && (
         <button
-          onClick={() => setShowModal(true)}
+          onClick={() => { setEditingPost(null); setShowModal(true) }}
           className="w-full flex items-center justify-center gap-1.5 bg-brand hover:bg-brand-hover text-white py-2.5 rounded-full mb-6 font-medium transition-colors"
         >
           <Plus size={16} />
@@ -181,10 +294,30 @@ export default function Home() {
               onExpand={() => setExpandedPost(expandedPost === post.id ? null : post.id)}
               onDelete={id => setPosts(posts.filter(p => p.id !== id))}
               onStatusChange={updated => setPosts(posts.map(p => (p.id === updated.id ? updated : p)))}
+              onEdit={p => { setEditingPost(p); setShowModal(true) }}
               session={session}
               showToast={showToast}
             />
           ))}
+
+          {expiredPosts.length > 0 && (
+            <>
+              <p className="text-xs font-medium text-muted uppercase tracking-wide pt-2">Expired</p>
+              {expiredPosts.map(post => (
+                <PostCard
+                  key={post.id}
+                  post={post}
+                  expanded={expandedPost === post.id}
+                  onExpand={() => setExpandedPost(expandedPost === post.id ? null : post.id)}
+                  onDelete={id => setPosts(posts.filter(p => p.id !== id))}
+                  onStatusChange={updated => setPosts(posts.map(p => (p.id === updated.id ? updated : p)))}
+                  onEdit={p => { setEditingPost(p); setShowModal(true) }}
+                  session={session}
+                  showToast={showToast}
+                />
+              ))}
+            </>
+          )}
 
           {claimedPosts.length > 0 && (
             <>
@@ -197,6 +330,7 @@ export default function Home() {
                   onExpand={() => setExpandedPost(expandedPost === post.id ? null : post.id)}
                   onDelete={id => setPosts(posts.filter(p => p.id !== id))}
                   onStatusChange={updated => setPosts(posts.map(p => (p.id === updated.id ? updated : p)))}
+                  onEdit={p => { setEditingPost(p); setShowModal(true) }}
                   session={session}
                   showToast={showToast}
                 />
@@ -209,10 +343,12 @@ export default function Home() {
       {/* Modal */}
       {showModal && (
         <NewPostModal
-          onClose={() => setShowModal(false)}
+          editingPost={editingPost}
+          onClose={() => { setShowModal(false); setEditingPost(null) }}
           onPost={newPost => {
-            setPosts([newPost, ...posts])
+            setPosts(editingPost ? posts.map(p => (p.id === newPost.id ? newPost : p)) : [newPost, ...posts])
             setShowModal(false)
+            setEditingPost(null)
           }}
           showToast={showToast}
         />
@@ -235,32 +371,59 @@ export default function Home() {
   )
 }
 
-function PostCard({ post, expanded, onExpand, onDelete, onStatusChange, session, showToast }: {
+function PostCard({ post, expanded, onExpand, onDelete, onStatusChange, onEdit, session, showToast }: {
   post: Post
   expanded: boolean
   onExpand: () => void
   onDelete: (id: number) => void
   onStatusChange: (post: Post) => void
+  onEdit: (post: Post) => void
   session: Session | null
   showToast: (message: string, kind?: Toast["kind"]) => void
 }) {
+  const router = useRouter()
   const [comments, setComments] = useState<Comment[]>([])
   const [commentsLoading, setCommentsLoading] = useState(true)
   const [newComment, setNewComment] = useState("")
   const [submittingComment, setSubmittingComment] = useState(false)
   const [updatingStatus, setUpdatingStatus] = useState(false)
+  const [messaging, setMessaging] = useState(false)
 
   const isOwner = session?.user?.email === post.author_email
   const isClaimed = post.status === "CLAIMED"
+  const expired = isExpired(post)
 
   useEffect(() => {
     if (!expanded) return
-    fetch(`/api/posts/${post.id}/comments`)
-      .then(res => (res.ok ? res.json() : Promise.reject(res)))
-      .then(setComments)
-      .catch(() => showToast("Couldn't load comments."))
-      .finally(() => setCommentsLoading(false))
+    const loadComments = (showSpinner: boolean) => {
+      if (showSpinner) setCommentsLoading(true)
+      fetch(`/api/posts/${post.id}/comments`)
+        .then(res => (res.ok ? res.json() : Promise.reject(res)))
+        .then(setComments)
+        .catch(() => { if (showSpinner) showToast("Couldn't load comments.") })
+        .finally(() => setCommentsLoading(false))
+    }
+    loadComments(true)
+    const interval = setInterval(() => loadComments(false), 5000)
+    return () => clearInterval(interval)
   }, [expanded, post.id, showToast])
+
+  const messagePoster = async () => {
+    if (messaging) return
+    setMessaging(true)
+    const res = await fetch("/api/conversations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ post_id: post.id })
+    })
+    setMessaging(false)
+    if (!res.ok) {
+      showToast("Failed to start conversation")
+      return
+    }
+    const conversation = await res.json()
+    router.push(`/messages?c=${conversation.id}`)
+  }
 
   const submitComment = async () => {
     if (!newComment.trim() || submittingComment) return
@@ -329,6 +492,8 @@ function PostCard({ post, expanded, onExpand, onDelete, onStatusChange, session,
           <span className="flex items-center gap-1 text-xs font-medium text-muted">
             <Check size={12} /> Claimed
           </span>
+        ) : expired ? (
+          <span className="text-xs font-medium text-muted">Expired</span>
         ) : (
           <span className="text-xs text-muted">{timeAgo(post.created_at)}</span>
         )}
@@ -349,8 +514,15 @@ function PostCard({ post, expanded, onExpand, onDelete, onStatusChange, session,
 
       <div className="flex justify-between items-center mt-2">
         <p className="text-xs text-muted">{post.author_name}</p>
-        {isOwner && (
+        {isOwner ? (
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => onEdit(post)}
+              className="flex items-center gap-1 text-xs text-muted hover:text-brand transition-colors"
+            >
+              <Pencil size={12} />
+              Edit
+            </button>
             <button
               onClick={toggleStatus}
               disabled={updatingStatus}
@@ -373,7 +545,16 @@ function PostCard({ post, expanded, onExpand, onDelete, onStatusChange, session,
               Delete
             </button>
           </div>
-        )}
+        ) : session && !isClaimed ? (
+          <button
+            onClick={messagePoster}
+            disabled={messaging}
+            className="flex items-center gap-1 text-xs text-muted hover:text-brand transition-colors disabled:opacity-50"
+          >
+            {messaging ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />}
+            Message
+          </button>
+        ) : null}
       </div>
 
       {/* Comments Toggle */}
@@ -436,30 +617,32 @@ function PostCard({ post, expanded, onExpand, onDelete, onStatusChange, session,
   )
 }
 
-function NewPostModal({ onClose, onPost, showToast }: {
+function splitAvailableTime(iso: string) {
+  const d = new Date(iso)
+  const pad = (n: number) => n.toString().padStart(2, "0")
+  const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  let hour = d.getHours()
+  const period: "AM" | "PM" = hour >= 12 ? "PM" : "AM"
+  hour = hour % 12
+  if (hour === 0) hour = 12
+  return { date, hour: pad(hour), minute: pad(d.getMinutes()), period }
+}
+
+function NewPostModal({ editingPost, onClose, onPost, showToast }: {
+  editingPost: Post | null
   onClose: () => void
   onPost: (post: Post) => void
   showToast: (message: string, kind?: Toast["kind"]) => void
 }) {
-  const [type, setType] = useState<PostType>("DONATE")
-  const [message, setMessage] = useState("")
-  const [diningHall, setDiningHall] = useState("")
-  const [availableDate, setAvailableDate] = useState("")
-  const [availableHour, setAvailableHour] = useState("")
-  const [availableMinute, setAvailableMinute] = useState("")
-  const [availablePeriod, setAvailablePeriod] = useState<"AM" | "PM">("AM")
+  const existingTime = editingPost?.available_time ? splitAvailableTime(editingPost.available_time) : null
+  const [type, setType] = useState<PostType>(editingPost?.type ?? "DONATE")
+  const [message, setMessage] = useState(editingPost?.message ?? "")
+  const [diningHall, setDiningHall] = useState(editingPost?.dining_hall ?? "")
+  const [availableDate, setAvailableDate] = useState(existingTime?.date ?? "")
+  const [availableHour, setAvailableHour] = useState(existingTime?.hour ?? "")
+  const [availableMinute, setAvailableMinute] = useState(existingTime?.minute ?? "")
+  const [availablePeriod, setAvailablePeriod] = useState<"AM" | "PM">(existingTime?.period ?? "AM")
   const [submitting, setSubmitting] = useState(false)
-
-  const DINING_HALLS = [
-    'Downstein',
-    'Third North',
-    'Lipton',
-    'Kimmel',
-    'Jasper Kane',
-    'Palladium',
-    'Upstein',
-    'Crave'
-  ]
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -503,19 +686,29 @@ function NewPostModal({ onClose, onPost, showToast }: {
     }
 
     setSubmitting(true)
-    const res = await fetch("/api/posts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type,
-        message,
-        dining_hall: diningHall,
-        available_time: availableTime
-      })
-    })
+    const res = editingPost
+      ? await fetch(`/api/posts/${editingPost.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message,
+            dining_hall: diningHall,
+            available_time: availableTime
+          })
+        })
+      : await fetch("/api/posts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type,
+            message,
+            dining_hall: diningHall,
+            available_time: availableTime
+          })
+        })
     setSubmitting(false)
     if (!res.ok) {
-      showToast("Failed to create post")
+      showToast(editingPost ? "Failed to save post" : "Failed to create post")
       return
     }
     const post = await res.json()
@@ -529,7 +722,7 @@ function NewPostModal({ onClose, onPost, showToast }: {
     >
       <div className="bg-card rounded-2xl p-6 w-full max-w-md mx-4">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="font-bold text-lg">New Post</h2>
+          <h2 className="font-bold text-lg">{editingPost ? "Edit Post" : "New Post"}</h2>
           <button onClick={onClose} className="text-muted hover:text-foreground transition-colors" aria-label="Close">
             <X size={18} />
           </button>
@@ -540,8 +733,9 @@ function NewPostModal({ onClose, onPost, showToast }: {
           {(["DONATE", "REQUEST"] as const).map(t => (
             <button
               key={t}
-              onClick={() => setType(t)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full text-sm font-medium transition-colors ${
+              onClick={() => !editingPost && setType(t)}
+              disabled={!!editingPost}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full text-sm font-medium transition-colors disabled:cursor-not-allowed ${
                 type === t ? "bg-brand text-white" : "border border-border text-muted"
               }`}
             >
@@ -615,7 +809,7 @@ function NewPostModal({ onClose, onPost, showToast }: {
           className="w-full flex items-center justify-center gap-2 bg-brand hover:bg-brand-hover text-white py-2 rounded-full font-medium transition-colors disabled:opacity-50"
         >
           {submitting && <Loader2 size={16} className="animate-spin" />}
-          Post
+          {editingPost ? "Save" : "Post"}
         </button>
       </div>
     </div>
